@@ -28,7 +28,12 @@ dependencies {
 	testImplementation 'io.projectreactor:reactor-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-	implementation 'org.springframework.ai:spring-ai-openai-spring-boot-starter'
+	implementation 'org.springframework.ai:spring-ai-spring-boot-autoconfigure'
+	implementation 'org.springframework.ai:spring-ai-openai'
+	implementation 'org.springframework.ai:spring-ai-huggingface'
+
+	//TODO 데이터베이스로 메뉴판 데이터 입력 시 사용 검토 중
+	implementation 'org.springframework.ai:spring-ai-pdf-document-reader'
 
 	runtimeOnly 'io.netty:netty-resolver-dns-native-macos:4.1.113.Final:osx-aarch_64'
 }
