@@ -1,14 +1,20 @@
 package com.example.demo.ai;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.InMemoryChatMemory;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.huggingface.HuggingfaceChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -16,9 +22,11 @@ import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
+import java.util.List;
 
 @RestController
 public class AiController {
+    private static final Logger log = LoggerFactory.getLogger(AiController.class);
     @Autowired
     private OpenAiChatModel openAiChatModel;
     private final ChatMemory chatMemory = new InMemoryChatMemory();
@@ -69,5 +77,39 @@ public class AiController {
                 new Prompt(chatMessage))
             .map(chatResponse -> chatResponse.getResult().getOutput().getContent())
             .timeout(Duration.ofSeconds(10));
+    }
+
+    @Autowired
+    private EmbeddingModel embeddingModel;
+    @Autowired
+    private VectorStore vectorStore;
+    @PostMapping(value = "/pgvector/store", produces = "text/event-stream")
+    public Flux<Boolean> pgVectorStore(@RequestBody String chatMessage) {
+        List<Document> documents = List.of(chatMessage).stream().map(message -> Document.builder().withContent(message).build()).toList();
+        for(Document document : documents) {
+            System.out.println(document.getContent());
+            document.setEmbedding(embeddingModel.embed(document.getContent()));
+            for(Float f : document.getEmbedding())
+                System.out.print(f + " ");
+            System.out.println();
+        }
+
+        vectorStore.add(documents);
+        return Flux.fromArray(new Boolean[]{true});
+    }
+
+    @PostMapping(value = "/pgvector/generate", produces = "text/event-stream")
+    public Flux<String> generateAnswer(@RequestBody String userQuestion) {
+        List<Document> retrievedDocs = vectorStore.similaritySearch(SearchRequest.query(userQuestion).withTopK(2));
+        List<String> retrievedStrings = retrievedDocs.stream().map(Document::getContent).toList();
+        for(String string : retrievedStrings)
+            log.info("retrieved : " + string);
+        String prompt = """
+            다음은 검색된 문서들입니다:
+            %s
+            위 문서를 참고하여 질문에 답해주세요:
+            "%s"
+            """.formatted(String.join("\n", retrievedStrings), userQuestion);
+        return Flux.just(openAiChatModel.call(prompt));
     }
 }
