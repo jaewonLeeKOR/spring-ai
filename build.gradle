@@ -9,7 +9,7 @@ version = '0.0.1-SNAPSHOT'
 
 java {
 	toolchain {
-		languageVersion = JavaLanguageVersion.of(23)
+		languageVersion = JavaLanguageVersion.of(17)
 	}
 }
 
@@ -36,6 +36,9 @@ dependencies {
 	implementation 'org.springframework.ai:spring-ai-pdf-document-reader'
 
 	runtimeOnly 'io.netty:netty-resolver-dns-native-macos:4.1.113.Final:osx-aarch_64'
+
+	//vectordb로 postgresql의 pgvector 사용
+	implementation 'org.springframework.ai:spring-ai-pgvector-store-spring-boot-starter'
 }
 
 dependencyManagement {
@@ -46,4 +49,8 @@ dependencyManagement {
 
 tasks.named('test') {
 	useJUnitPlatform()
+}
+
+bootBuildImage {
+	imageName = 'spring-ai-jaewon'
 }
