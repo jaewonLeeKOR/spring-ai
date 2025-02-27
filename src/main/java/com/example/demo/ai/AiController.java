@@ -1,5 +1,6 @@
 package com.example.demo.ai;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -13,9 +14,16 @@ import org.springframework.ai.huggingface.HuggingfaceChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.reader.ExtractedTextFormatter;
+import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
+import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
+import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.Resource;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -23,6 +31,8 @@ import reactor.core.publisher.Flux;
 
 import java.time.Duration;
 import java.util.List;
+
+import static com.example.demo.ai.PromptMessage.*;
 
 @RestController
 public class AiController {
@@ -111,5 +121,69 @@ public class AiController {
             "%s"
             """.formatted(String.join("\n", retrievedStrings), userQuestion);
         return Flux.just(openAiChatModel.call(prompt));
+    }
+
+    record EmbeddingPdfRequest(String fileName, String userName) {}
+
+    @PostMapping(value = "/pdf/embedding")
+    public Integer embeddingPdf(@RequestBody EmbeddingPdfRequest request) {
+        Resource pdfResource = new ClassPathResource(String.format("pdf/%s", request.fileName));
+
+        PdfDocumentReaderConfig config = PdfDocumentReaderConfig.builder()
+            .withPageTopMargin(0)
+            .withPageExtractedTextFormatter(ExtractedTextFormatter.builder()
+                .withNumberOfTopTextLinesToDelete(0)
+                .build())
+            .withPagesPerDocument(1)
+            .build();
+        PagePdfDocumentReader pdfReader = new PagePdfDocumentReader(pdfResource, config);
+        List<Document> documents = pdfReader.get();
+        TokenTextSplitter splitter = new TokenTextSplitter(1000, 400, 10, 5000, true);
+        List<Document> splitDocuments = splitter.apply(documents);
+        for (Document document : splitDocuments) {
+            document.getMetadata().put("user_name", request.userName);
+        }
+        vectorStore.accept(splitDocuments);
+        return splitDocuments.size();
+    }
+
+    record TechRecruitmentRequest(String companyName, String fileName, String userName) {}
+    record TechRecruitmentResponse(
+        String technicalCapabilityKeywords,
+        String projectExperiences,
+        String specialty,
+        String mattersRequiringVerificationByTheApplicant,
+        String reasonsForTheApplicantsInadequacy
+    ) {}
+
+    @PostMapping(value = "/pdf/retrieve")
+    public TechRecruitmentResponse retrievePdfResult(@RequestBody TechRecruitmentRequest request) throws Exception {
+        int documentAmount = 8;
+        String userQuestion = TechRecruitment_UserQuestion.message;
+
+        List<Document> retrievedDocs = vectorStore.similaritySearch(SearchRequest
+            .query(userQuestion)
+            .withTopK(documentAmount)
+            .withFilterExpression((new FilterExpressionBuilder()).eq("file_name", request.fileName).build())
+            .withFilterExpression((new FilterExpressionBuilder()).eq("user_name", request.userName).build())
+        );
+        for (Document doc : retrievedDocs) {
+            log.info(doc.toString());
+        }
+        List<String> retrievedStrings = retrievedDocs.stream().map(Document::getContent).toList();
+
+        String res = ChatClient.builder(openAiChatModel).build()
+            .prompt(new Prompt("", OpenAiChatOptions.builder().withModel(OpenAiApi.ChatModel.GPT_4_O).build()))
+            .system(TechRecruitment_System.message)
+            .user(TechRecruitment_UserMessagePrompt.message.formatted(String.join("\n", retrievedStrings), userQuestion))
+            .call().content();
+
+        log.info(res);
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        TechRecruitmentResponse techRecruitmentResponse = objectMapper.readValue(res, TechRecruitmentResponse.class);
+        log.info(techRecruitmentResponse.toString());
+
+        return techRecruitmentResponse;
     }
 }
